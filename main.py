@@ -676,34 +676,38 @@ class DobrobudBot:
                 pass
 
     async def run_webhook(self):
-        """Запуск webhook сервера для Railway"""
+        """Запуск webhook сервера для Render"""
         try:
+            # Инициализируем приложение
             await self.application.initialize()
             await self.application.start()
             
+            # Создаем веб-приложение
             app = web.Application()
 
             async def handle_post(request):
                 try:
                     data = await request.json()
-                    logger.info(f"Webhook received: {data.get('update_id', 'unknown')}")
+                    logger.info(f"Webhook received update: {data.get('update_id', 'unknown')}")
                     
                     update = Update.de_json(data, self.application.bot)
                     if update is None:
-                        logger.error("Failed to parse update")
+                        logger.error("Failed to parse update from JSON")
                         return web.Response(text="ERROR", status=400)
                     
+                    # Обрабатываем обновление
                     await self.application.process_update(update)
                     return web.Response(text="OK")
+                    
                 except Exception as e:
-                    logger.error(f"Webhook error: {e}")
+                    logger.error(f"Webhook processing error: {e}")
                     return web.Response(text="ERROR", status=500)
 
+            async def handle_get(request):
+                return web.Response(text="Dobrobud Bot працює на Render")
+
             async def handle_health(request):
-                return web.Response(
-                    text=f"Dobrobud Bot OK - {datetime.now().isoformat()}", 
-                    status=200
-                )
+                return web.Response(text="OK", status=200)
 
             async def handle_status(request):
                 status_data = {
@@ -711,77 +715,97 @@ class DobrobudBot:
                     "timestamp": datetime.now().isoformat(),
                     "service": "Dobrobud Construction Bot",
                     "platform": "Render",
-                    "active_orders": len(user_responses),
-                    "webhook_url": f"{WEBHOOK_URL}/webhook"
+                    "active_orders": len(user_responses)
                 }
                 return web.json_response(status_data)
 
-            # Маршруты
+            # Настраиваем маршруты
             app.router.add_post('/webhook', handle_post)
+            app.router.add_get('/webhook', handle_get)
             app.router.add_get('/health', handle_health)
             app.router.add_get('/status', handle_status)
             app.router.add_get('/', handle_health)
 
-            # Запуск сервера
+            # Запускаем сервер
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', PORT)
             await site.start()
+            logger.info(f"Web server started on port {PORT}")
 
-            # Настройка webhook
+            # Настраиваем webhook
             webhook_url = f"{WEBHOOK_URL}/webhook"
             
             try:
                 # Удаляем старый webhook
                 await self.application.bot.delete_webhook(drop_pending_updates=True)
-                logger.info("Old webhook deleted")
+                logger.info("Previous webhook deleted")
                 
-                await asyncio.sleep(3)
+                # Ждем немного
+                await asyncio.sleep(2)
                 
-                # Устанавливаем новый
-                result = await self.application.bot.set_webhook(
+                # Устанавливаем новый webhook
+                webhook_set = await self.application.bot.set_webhook(
                     url=webhook_url,
                     drop_pending_updates=True,
-                    max_connections=20,  # Уменьшаем для стабильности на Render
+                    max_connections=20,
                     allowed_updates=["message", "callback_query"]
                 )
-                logger.info(f"Render webhook set: {webhook_url}, success: {result}")
                 
-                # Проверяем
+                if webhook_set:
+                    logger.info(f"✅ Webhook успешно установлен: {webhook_url}")
+                else:
+                    logger.error("❌ Ошибка установки webhook")
+                
+                # Проверяем webhook
                 webhook_info = await self.application.bot.get_webhook_info()
-                logger.info(f"Webhook verification: URL={webhook_info.url}, Pending={webhook_info.pending_update_count}")
+                logger.info(f"Webhook info: URL={webhook_info.url}, Pending={webhook_info.pending_update_count}")
                 
             except Exception as e:
-                logger.error(f"Error setting webhook: {e}")
+                logger.error(f"Webhook setup error: {e}")
                 raise
             
-            logger.info(f"🚀 Dobrobud Bot запущен на Render: {WEBHOOK_URL}")
-            logger.info(f"🔗 Webhook URL: {webhook_url}")
-            logger.info(f"📡 Port: {PORT}")
-
-            # Держим сервер активным
+            logger.info("🚀 Dobrobud Bot успешно запущен на Render")
+            
+            # Основной цикл
             try:
                 while True:
-                    await asyncio.sleep(3600)  # 1 час
-                    logger.info("Bot heartbeat - Render Dobrobud")
+                    await asyncio.sleep(300)  # 5 минут
+                    logger.info("Bot heartbeat - Dobrobud on Render")
             except KeyboardInterrupt:
-                logger.info("Bot stopping...")
+                logger.info("Bot stopping by user...")
+            except Exception as e:
+                logger.error(f"Bot runtime error: {e}")
             finally:
+                logger.info("Stopping bot...")
                 await self.application.stop()
                 await self.application.shutdown()
 
         except Exception as e:
-            logger.error(f"Critical error in Render webhook: {e}")
+            logger.error(f"Critical startup error: {e}")
             raise
 
 async def main():
     logger.info("🚀 Starting Dobrobud Construction Bot on Render...")
-    bot = DobrobudBot()
-    await bot.run_webhook()
+    try:
+        bot = DobrobudBot()
+        await bot.run_webhook()
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        # Попробуем еще раз через 10 секунд
+        await asyncio.sleep(10)
+        try:
+            bot = DobrobudBot()
+            await bot.run_webhook()
+        except Exception as retry_error:
+            logger.error(f"Retry failed: {retry_error}")
+            raise
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
-        raise
+        logger.error(f"Critical error: {e}")
+        exit(1)
