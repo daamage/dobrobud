@@ -31,22 +31,27 @@ class DobrobudBot:
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        user_data[user_id] = {'stage': 'start', 'data': {}}
-        
-        text = (
-            "🏗️ **ДОБРОБУД** - Ваш надійний партнер!\n\n"
-            "Оберіть послугу:"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("🧱 Матеріали", callback_data="materials")],
-            [InlineKeyboardButton("👷‍♂️ Робітники", callback_data="workers")],
-            [InlineKeyboardButton("🔧 Інструменти", callback_data="tools")],
-            [InlineKeyboardButton("🏠 Будівельні роботи", callback_data="construction")]
-        ]
-        
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            user_id = update.effective_user.id
+            user_data[user_id] = {'stage': 'start', 'data': {}}
+            
+            text = (
+                "🏗️ **ДОБРОБУД** - Ваш надійний партнер!\n\n"
+                "Оберіть послугу:"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("🧱 Матеріали", callback_data="materials")],
+                [InlineKeyboardButton("👷‍♂️ Робітники", callback_data="workers")],
+                [InlineKeyboardButton("🔧 Інструменти", callback_data="tools")],
+                [InlineKeyboardButton("🏠 Будівельні роботи", callback_data="construction")]
+            ]
+            
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            logger.info(f"✅ Start command processed for user {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Error in start command: {e}")
+            await update.message.reply_text("❌ Помилка. Спробуйте ще раз.")
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
@@ -293,6 +298,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     post_data = self.rfile.read(content_length)
                     update_data = json.loads(post_data.decode('utf-8'))
                     
+                    logger.info(f"📨 Получен webhook: {update_data.get('update_id', 'unknown')}")
+                    
                     update = Update.de_json(update_data, bot_instance.app.bot)
                     if update:
                         # Создаем новый event loop для обработки
@@ -300,6 +307,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         asyncio.set_event_loop(loop)
                         loop.run_until_complete(bot_instance.app.process_update(update))
                         loop.close()
+                        logger.info(f"✅ Update обработан: {update.update_id}")
+                    else:
+                        logger.error("❌ Не удалось создать Update объект")
                 
                 self.send_response(200)
                 self.send_header('Content-type', 'text/plain')
@@ -307,7 +317,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'OK')
                 
             except Exception as e:
-                logger.error(f"Webhook error: {e}")
+                logger.error(f"❌ Webhook error: {e}")
                 self.send_response(500)
                 self.end_headers()
         else:
@@ -315,6 +325,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
     
     def do_GET(self):
+        logger.info(f"📡 GET запрос: {self.path}")
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
@@ -332,9 +343,8 @@ async def setup_webhook():
         await bot_instance.app.initialize()
         await bot_instance.app.start()
         
-        # URL для webhook
-        hostname = os.getenv('RENDER_EXTERNAL_HOSTNAME', 'localhost')
-        webhook_url = f"https://{hostname}.onrender.com/webhook"
+        # URL для webhook - исправляем двойной .onrender.com
+        webhook_url = "https://dobrobud.onrender.com/webhook"
         
         # Устанавливаем webhook
         await bot_instance.app.bot.set_webhook(
